@@ -52,6 +52,40 @@ def calculate_rsi(df: pd.DataFrame, period: int = 14, price_col: str = "Close") 
     return rsi
 
 
+def calculate_zscore(df: pd.DataFrame, period: int = 20, price_col: str = "Close") -> pd.Series:
+    """
+    Calculate the rolling Z-score of price relative to its own moving
+    average — how many standard deviations the current price sits from
+    its recent mean.
+
+    Uses a 20-period window by convention, matching the standard window
+    used for Bollinger Bands (this Z-score is mathematically equivalent
+    to the price's position within Bollinger Bands, expressed as a single
+    number instead of two lines).
+
+    Args:
+        df: DataFrame containing at least the price_col column.
+        period: Rolling window size (default 20).
+        price_col: Column to compute the Z-score on (default "Close").
+
+    Returns:
+        A Series of Z-score values, aligned to df's index. The first
+        `period - 1` values will be NaN (not enough history yet).
+    """
+    price = df[price_col]
+    rolling_mean = price.rolling(window=period).mean()
+    rolling_std = price.rolling(window=period).std()
+
+    zscore = (price - rolling_mean) / rolling_std
+
+    # Edge case: flat price for the entire window -> std is 0 -> division
+    # by zero. The price is exactly at its own mean, so 0 is correct.
+    zscore = zscore.where(rolling_std != 0, 0)
+
+    zscore.name = "Z_score"
+    return zscore
+
+
 if __name__ == "__main__":
     import sys
     from pathlib import Path
@@ -61,4 +95,5 @@ if __name__ == "__main__":
 
     prices = load_price_data("USDBRL=X", "2024-01-01", "2024-12-31")
     prices["RSI"] = calculate_rsi(prices)
-    print(prices[["Close", "RSI"]].tail(20))
+    prices["Z_score"] = calculate_zscore(prices)
+    print(prices[["Close", "RSI", "Z_score"]].tail(20))
