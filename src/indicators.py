@@ -121,6 +121,44 @@ def calculate_atr(df: pd.DataFrame, period: int = 14) -> pd.Series:
     return atr
 
 
+def add_indicators(
+    df: pd.DataFrame,
+    rsi_period: int = 14,
+    zscore_period: int = 20,
+    atr_period: int = 14,
+    dropna: bool = True,
+) -> pd.DataFrame:
+    """
+    Add RSI, Z-score, and ATR columns to a price DataFrame.
+
+    This is the single entry point the rest of the pipeline (strategy.py)
+    should use — it wires together the three indicator calculations above
+    into one DataFrame, ready for signal generation.
+
+    Args:
+        df: Cleaned price DataFrame (see data_loader.clean_price_data).
+        rsi_period: RSI lookback window.
+        zscore_period: Z-score rolling window.
+        atr_period: ATR lookback window.
+        dropna: If True (default), drops the leading "warm-up" rows where
+            at least one indicator is still NaN (not enough history yet
+            to compute it). Set to False to inspect the warm-up period.
+
+    Returns:
+        A new DataFrame (the input df is not mutated) with RSI, Z_score,
+        and ATR columns added.
+    """
+    result = df.copy()
+    result["RSI"] = calculate_rsi(result, period=rsi_period)
+    result["Z_score"] = calculate_zscore(result, period=zscore_period)
+    result["ATR"] = calculate_atr(result, period=atr_period)
+
+    if dropna:
+        result = result.dropna(subset=["RSI", "Z_score", "ATR"])
+
+    return result
+
+
 if __name__ == "__main__":
     import sys
     from pathlib import Path
@@ -129,7 +167,7 @@ if __name__ == "__main__":
     from src.data_loader import load_price_data
 
     prices = load_price_data("USDBRL=X", "2024-01-01", "2024-12-31")
-    prices["RSI"] = calculate_rsi(prices)
-    prices["Z_score"] = calculate_zscore(prices)
-    prices["ATR"] = calculate_atr(prices)
-    print(prices[["Close", "RSI", "Z_score", "ATR"]].tail(20))
+    prices_with_indicators = add_indicators(prices)
+    print(prices_with_indicators[["Close", "RSI", "Z_score", "ATR"]].head())
+    print(f"\nRows before dropna warm-up removal: {len(prices)}")
+    print(f"Rows after: {len(prices_with_indicators)}")
