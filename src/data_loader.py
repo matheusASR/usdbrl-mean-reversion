@@ -4,6 +4,8 @@ data_loader.py
 Handles fetching historical price data from Yahoo Finance via yfinance.
 """
 
+import os
+
 import pandas as pd
 import yfinance as yf
 
@@ -75,16 +77,63 @@ def clean_price_data(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-if __name__ == "__main__":
-    # Quick manual check while developing — not a substitute for real tests
-    # (those come in a later step).
-    raw_df = fetch_price_data("USDBRL=X", "2024-01-01", "2024-12-31")
-    print("Raw data:")
-    print(raw_df.head())
-    print(raw_df.shape)
+def _build_cache_path(ticker: str, start: str, end: str, cache_dir: str) -> str:
+    """
+    Build a deterministic cache file path for a given ticker/date range.
 
+    The ticker is sanitized (e.g. "=" replaced) since some symbols like
+    "USDBRL=X" contain characters that are best avoided in filenames.
+    """
+    safe_ticker = ticker.replace("=", "_").replace("/", "_")
+    filename = f"{safe_ticker}_{start}_{end}.csv"
+    return os.path.join(cache_dir, filename)
+
+
+def load_price_data(
+    ticker: str,
+    start: str,
+    end: str,
+    cache_dir: str = "data",
+    force_refresh: bool = False,
+) -> pd.DataFrame:
+    """
+    Load cleaned price data for a ticker, using a local cache when available.
+
+    On the first call for a given ticker/date range, downloads and cleans
+    the data via fetch_price_data + clean_price_data, then saves the result
+    to a local CSV cache. Subsequent calls with the same parameters read
+    directly from the cache instead of hitting the yfinance API again.
+
+    Args:
+        ticker: Yahoo Finance ticker symbol.
+        start: Start date ("YYYY-MM-DD").
+        end: End date ("YYYY-MM-DD").
+        cache_dir: Directory where cache files are stored.
+        force_refresh: If True, ignores any existing cache and re-downloads.
+
+    Returns:
+        A cleaned DataFrame with OHLCV data, indexed by date.
+    """
+    os.makedirs(cache_dir, exist_ok=True)
+    cache_path = _build_cache_path(ticker, start, end, cache_dir)
+
+    if os.path.exists(cache_path) and not force_refresh:
+        print(f"Loading from cache: {cache_path}")
+        return pd.read_csv(cache_path, index_col=0, parse_dates=True)
+
+    print(f"Downloading fresh data for {ticker} ({start} to {end})")
+    raw_df = fetch_price_data(ticker, start, end)
     clean_df = clean_price_data(raw_df)
-    print("\nCleaned data:")
-    print(clean_df.head())
-    print(clean_df.shape)
-    print(f"\nNaNs remaining: {clean_df.isna().sum().sum()}")
+    clean_df.to_csv(cache_path)
+
+    return clean_df
+
+
+if __name__ == "__main__":
+    # First call: downloads and caches. Second call: reads from cache.
+    # (delete the file in data/ if you want to force a fresh download)
+    df1 = load_price_data("USDBRL=X", "2024-01-01", "2024-12-31")
+    print(df1.head())
+
+    df2 = load_price_data("USDBRL=X", "2024-01-01", "2024-12-31")
+    print(df2.head())
