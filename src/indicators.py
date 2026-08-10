@@ -86,6 +86,41 @@ def calculate_zscore(df: pd.DataFrame, period: int = 20, price_col: str = "Close
     return zscore
 
 
+def calculate_atr(df: pd.DataFrame, period: int = 14) -> pd.Series:
+    """
+    Calculate the Average True Range (ATR) using Wilder's smoothing method
+    — the same technique (and same original author) as the RSI above.
+
+    True Range for a given day is the largest of:
+        1. High - Low
+        2. |High - previous Close|
+        3. |Low - previous Close|
+    This captures both intraday movement and any gap versus the prior
+    close, which a simple High - Low would miss.
+
+    Args:
+        df: DataFrame containing High, Low, and Close columns.
+        period: Lookback window, in periods (default 14).
+
+    Returns:
+        A Series of ATR values, in price units (not %), aligned to df's
+        index. The first `period` values will be NaN.
+    """
+    high = df["High"]
+    low = df["Low"]
+    prev_close = df["Close"].shift(1)
+
+    range_1 = high - low
+    range_2 = (high - prev_close).abs()
+    range_3 = (low - prev_close).abs()
+
+    true_range = pd.concat([range_1, range_2, range_3], axis=1).max(axis=1)
+
+    atr = true_range.ewm(alpha=1 / period, min_periods=period, adjust=False).mean()
+    atr.name = "ATR"
+    return atr
+
+
 if __name__ == "__main__":
     import sys
     from pathlib import Path
@@ -96,4 +131,5 @@ if __name__ == "__main__":
     prices = load_price_data("USDBRL=X", "2024-01-01", "2024-12-31")
     prices["RSI"] = calculate_rsi(prices)
     prices["Z_score"] = calculate_zscore(prices)
-    print(prices[["Close", "RSI", "Z_score"]].tail(20))
+    prices["ATR"] = calculate_atr(prices)
+    print(prices[["Close", "RSI", "Z_score", "ATR"]].tail(20))
