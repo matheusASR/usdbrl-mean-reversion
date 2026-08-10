@@ -1,0 +1,24 @@
+# Virtual environment
+venv/
+.venv/
+env/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Data (raw/cached downloads - regenerate via data_loader.py)
+data/*.csv
+data/*.parquet
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/
+
+# Environment variables (if any API keys are added later)
+.env
