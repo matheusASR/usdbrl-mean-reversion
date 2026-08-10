@@ -4,10 +4,17 @@ data_loader.py
 Handles fetching historical price data from Yahoo Finance via yfinance.
 """
 
+import logging
 import os
 
 import pandas as pd
 import yfinance as yf
+
+logger = logging.getLogger(__name__)
+
+
+class DataLoadError(Exception):
+    """Raised when price data cannot be fetched or is invalid."""
 
 
 def fetch_price_data(ticker: str, start: str, end: str) -> pd.DataFrame:
@@ -22,14 +29,25 @@ def fetch_price_data(ticker: str, start: str, end: str) -> pd.DataFrame:
     Returns:
         A DataFrame with columns [Open, High, Low, Close, Volume],
         indexed by date.
+
+    Raises:
+        ValueError: If start is not before end.
+        DataLoadError: If the download fails or returns no data
+            (e.g. an invalid ticker symbol).
     """
-    raw_data = yf.download(
-        ticker,
-        start=start,
-        end=end,
-        progress=False,
-        auto_adjust=True,
-    )
+    if start >= end:
+        raise ValueError(f"start date ({start}) must be before end date ({end})")
+
+    try:
+        raw_data = yf.download(
+            ticker,
+            start=start,
+            end=end,
+            progress=False,
+            auto_adjust=True,
+        )
+    except Exception as exc:
+        raise DataLoadError(f"Failed to download data for '{ticker}': {exc}") from exc
 
     # Newer yfinance versions return a MultiIndex on columns
     # (e.g. level 0 = "Close"/"High"/..., level 1 = ticker), even for a
@@ -38,6 +56,13 @@ def fetch_price_data(ticker: str, start: str, end: str) -> pd.DataFrame:
     if isinstance(raw_data.columns, pd.MultiIndex):
         raw_data.columns = raw_data.columns.get_level_values(0)
 
+    if raw_data.empty:
+        raise DataLoadError(
+            f"No data returned for ticker '{ticker}' between {start} and {end}. "
+            "Check that the ticker symbol is correct."
+        )
+
+    logger.info("Fetched %d rows for %s (%s to %s)", len(raw_data), ticker, start, end)
     return raw_data
 
 
@@ -71,9 +96,15 @@ def clean_price_data(df: pd.DataFrame) -> pd.DataFrame:
 
     df = df.sort_index()
     df = df[~df.index.duplicated(keep="first")]
+
+    n_missing = int(df.isna().any(axis=1).sum())
+    if n_missing > 0:
+        logger.warning("%d rows had missing values before forward-fill", n_missing)
+
     df = df.ffill()
     df = df.dropna()
 
+    logger.info("Cleaned data: %d rows remaining", len(df))
     return df
 
 
@@ -118,10 +149,15 @@ def load_price_data(
     cache_path = _build_cache_path(ticker, start, end, cache_dir)
 
     if os.path.exists(cache_path) and not force_refresh:
-        print(f"Loading from cache: {cache_path}")
-        return pd.read_csv(cache_path, index_col=0, parse_dates=True)
+        try:
+            logger.info("Loading from cache: %s", cache_path)
+            return pd.read_csv(cache_path, index_col=0, parse_dates=True)
+        except (pd.errors.ParserError, OSError) as exc:
+            # Cache file exists but is unreadable/corrupted — fall back to
+            # a fresh download instead of crashing.
+            logger.warning("Cache file unreadable (%s), re-downloading", exc)
 
-    print(f"Downloading fresh data for {ticker} ({start} to {end})")
+    logger.info("Downloading fresh data for %s (%s to %s)", ticker, start, end)
     raw_df = fetch_price_data(ticker, start, end)
     clean_df = clean_price_data(raw_df)
     clean_df.to_csv(cache_path)
@@ -130,6 +166,13 @@ def load_price_data(
 
 
 if __name__ == "__main__":
+    # Library modules should not call basicConfig themselves — only the
+    # entry point (this script, in this case) configures logging output.
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(message)s",
+    )
+
     # First call: downloads and caches. Second call: reads from cache.
     # (delete the file in data/ if you want to force a fresh download)
     df1 = load_price_data("USDBRL=X", "2024-01-01", "2024-12-31")
@@ -137,3 +180,10 @@ if __name__ == "__main__":
 
     df2 = load_price_data("USDBRL=X", "2024-01-01", "2024-12-31")
     print(df2.head())
+
+    # Demonstrating the error handling: an invalid ticker should raise
+    # DataLoadError with a clear message instead of failing silently.
+    try:
+        load_price_data("THIS_IS_NOT_A_REAL_TICKER", "2024-01-01", "2024-12-31")
+    except DataLoadError as exc:
+        logger.error("Handled expected failure: %s", exc)
