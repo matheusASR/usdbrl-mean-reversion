@@ -114,7 +114,7 @@ def calculate_atr(df: pd.DataFrame, period: int = 14) -> pd.Series:
     range_2 = (high - prev_close).abs()
     range_3 = (low - prev_close).abs()
 
-    true_range = pd.concat([range_1, range_2, range_3], axis=1).max(axis=1)
+    true_range = pd.concat([range_1, range_2, range_3], axis=1).max(axis=1, skipna=False)
 
     atr = true_range.ewm(alpha=1 / period, min_periods=period, adjust=False).mean()
     atr.name = "ATR"
