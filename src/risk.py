@@ -7,7 +7,12 @@ sits, and how many units to trade so that a fixed % of capital is at risk
 if that stop is hit (volatility-based position sizing).
 """
 
+import logging
+
+import numpy as np
 import pandas as pd
+
+logger = logging.getLogger(__name__)
 
 
 def calculate_stop_price(
@@ -43,6 +48,52 @@ def calculate_stop_price(
     return entry_price - direction * atr_multiplier * atr
 
 
+def calculate_position_size(
+    capital: float,
+    risk_per_trade: float,
+    entry_price,
+    stop_price,
+):
+    """
+    Calculate position size such that, if the stop-loss is hit, the loss
+    equals exactly `risk_per_trade` fraction of capital — no more, no
+    less. This is what makes sizing "volatility-based": trades with a
+    wider stop (more volatile conditions) get a smaller position, and
+    vice versa, keeping the dollar risk per trade constant.
+
+        risk_amount   = capital * risk_per_trade
+        stop_distance = |entry_price - stop_price|
+        position_size = risk_amount / stop_distance
+
+    Args:
+        capital: Total capital available.
+        risk_per_trade: Fraction of capital to risk per trade (e.g. 0.01
+            for 1%).
+        entry_price: Price at which the position was opened. Scalar or
+            pandas Series (vectorized).
+        stop_price: Stop-loss price (see calculate_stop_price). Same
+            shape as entry_price.
+
+    Returns:
+        Position size in units of the underlying asset, same shape as
+        the inputs. Returns 0 for any row where the stop distance is 0
+        (an undefined risk band — safer to size no position at all).
+    """
+    risk_amount = capital * risk_per_trade
+    stop_distance = abs(entry_price - stop_price)
+
+    if np.any(stop_distance == 0):
+        logger.warning("Zero stop distance encountered — sizing position to 0 for those rows")
+
+    # Replace a zero distance with infinity before dividing: risk / inf
+    # naturally evaluates to 0, avoiding a division-by-zero warning while
+    # still producing the correct "don't trade" result.
+    safe_distance = np.where(stop_distance == 0, np.inf, stop_distance)
+    position_size = risk_amount / safe_distance
+
+    return position_size
+
+
 if __name__ == "__main__":
     # Scalar example: a single long trade
     stop = calculate_stop_price(entry_price=5.00, atr=0.05, direction=1)
@@ -58,5 +109,8 @@ if __name__ == "__main__":
         "direction": [1, -1, 1],
     })
     df["stop_price"] = calculate_stop_price(df["Close"], df["ATR"], df["direction"])
+    df["position_size"] = calculate_position_size(
+        capital=100_000, risk_per_trade=0.01, entry_price=df["Close"], stop_price=df["stop_price"]
+    )
     print()
     print(df)
