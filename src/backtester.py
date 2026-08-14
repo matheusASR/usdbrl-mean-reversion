@@ -198,6 +198,149 @@ def run_simulation(
     return trades, open_position
 
 
+def build_equity_curve(
+    df: pd.DataFrame,
+    trades: list[Trade],
+    open_position: Optional[OpenPosition],
+    initial_capital: float,
+) -> pd.Series:
+    """
+    Build a daily mark-to-market equity curve, starting from
+    initial_capital.
+
+    Each day's equity is initial_capital plus:
+        - realized P&L: the sum of net_pnl from every trade whose
+          exit_date is on or before that day (already cost-adjusted).
+        - unrealized P&L: for any position open on that day (either a
+          now-closed trade, for the days before it exited, or the
+          dangling open_position at the end), the mark-to-market gain/
+          loss using that day's Close price against the cost-adjusted
+          entry price.
+
+    Using the cost-adjusted entry price for unrealized P&L (rather than
+    the raw theoretical entry price) keeps the transition from
+    "unrealized" to "realized" smooth on the exit day — the only jump
+    left is the exit cost itself, which is real.
+
+    Args:
+        df: Price DataFrame (must contain Close, indexed by date, same
+            index used during the simulation).
+        trades: Closed trades from run_simulation.
+        open_position: The still-open position from run_simulation, or
+            None.
+        initial_capital: Starting capital.
+
+    Returns:
+        A pd.Series indexed like df, representing total capital at the
+        close of each day.
+    """
+    dates = df.index
+    realized_pnl = pd.Series(0.0, index=dates)
+    unrealized_pnl = pd.Series(0.0, index=dates)
+
+    for trade in trades:
+        # Realized P&L kicks in from the exit date onward.
+        realized_pnl.loc[trade.exit_date:] += trade.net_pnl
+
+        # Mark-to-market for the days the trade was open: from entry up
+        # to (but not including) the exit day, which is realized instead.
+        open_days = dates[(dates >= trade.entry_date) & (dates < trade.exit_date)]
+        unrealized_pnl.loc[open_days] += (
+            trade.direction
+            * (df.loc[open_days, "Close"] - trade.execution_entry_price)
+            * trade.position_size
+        )
+
+    if open_position is not None:
+        open_days = dates[dates >= open_position.entry_date]
+        unrealized_pnl.loc[open_days] += (
+            open_position.direction
+            * (df.loc[open_days, "Close"] - open_position.execution_entry_price)
+            * open_position.position_size
+        )
+
+    equity = initial_capital + realized_pnl + unrealized_pnl
+    equity.name = "equity"
+    return equity
+
+
+def trades_to_dataframe(trades: list[Trade]) -> pd.DataFrame:
+    """
+    Convert a list of Trade objects into a DataFrame, materializing the
+    computed properties (gross_pnl, net_pnl, costs) as real columns.
+    """
+    columns = [
+        "entry_date", "exit_date", "direction", "entry_price", "exit_price",
+        "execution_entry_price", "execution_exit_price", "position_size",
+        "exit_reason", "gross_pnl", "net_pnl", "costs",
+    ]
+    if not trades:
+        return pd.DataFrame(columns=columns)
+
+    records = [
+        {
+            "entry_date": t.entry_date,
+            "exit_date": t.exit_date,
+            "direction": t.direction,
+            "entry_price": t.entry_price,
+            "exit_price": t.exit_price,
+            "execution_entry_price": t.execution_entry_price,
+            "execution_exit_price": t.execution_exit_price,
+            "position_size": t.position_size,
+            "exit_reason": t.exit_reason,
+            "gross_pnl": t.gross_pnl,
+            "net_pnl": t.net_pnl,
+            "costs": t.costs,
+        }
+        for t in trades
+    ]
+    return pd.DataFrame(records, columns=columns)
+
+
+@dataclass
+class BacktestResult:
+    """Everything metrics.py needs to evaluate a backtest run."""
+
+    trades: pd.DataFrame
+    equity_curve: pd.Series
+    open_position: Optional[OpenPosition]
+
+
+def run_backtest(
+    df: pd.DataFrame,
+    initial_capital: float,
+    cost_pct: float = DEFAULT_COST_PCT,
+) -> BacktestResult:
+    """
+    Single entry point for the backtest engine: runs the day-by-day
+    simulation and builds the equity curve, returning everything
+    metrics.py needs to evaluate performance.
+
+    Args:
+        df: Price DataFrame with signals and risk parameters already
+            computed (see strategy.generate_signals and
+            risk.apply_risk_management).
+        initial_capital: Starting capital.
+        cost_pct: Transaction cost per leg (default 0.05%).
+
+    Returns:
+        A BacktestResult with the trade log (as a DataFrame), the daily
+        equity curve, and any position still open at the end.
+    """
+    trade_list, open_position = run_simulation(df, cost_pct=cost_pct)
+    equity_curve = build_equity_curve(df, trade_list, open_position, initial_capital)
+    trades_df = trades_to_dataframe(trade_list)
+
+    final_equity = equity_curve.iloc[-1]
+    total_return_pct = (final_equity / initial_capital - 1) * 100
+    logger.info(
+        "Backtest complete: %d trades, final equity %.2f (%.2f%% return)",
+        len(trade_list), final_equity, total_return_pct,
+    )
+
+    return BacktestResult(trades=trades_df, equity_curve=equity_curve, open_position=open_position)
+
+
 if __name__ == "__main__":
     # Sanity check: all four direction/leg combinations
     for direction, label in [(1, "long"), (-1, "short")]:
@@ -248,3 +391,15 @@ if __name__ == "__main__":
             f"dir={t.direction:+d} | reason={t.exit_reason} | net_pnl={t.net_pnl:.2f}"
         )
     print(f"Still open at end: {dangling_position}")
+
+    equity = build_equity_curve(sim_df, trades, dangling_position, initial_capital=100_000)
+    print("\nEquity curve:")
+    print(equity)
+
+    # Single entry-point example — what strategy.py/risk.py hand off to,
+    # and what metrics.py will consume next.
+    result = run_backtest(sim_df, initial_capital=100_000)
+    print("\n--- run_backtest result ---")
+    print("\nTrades:")
+    print(result.trades)
+    print(f"\nFinal equity: {result.equity_curve.iloc[-1]:.2f}")
