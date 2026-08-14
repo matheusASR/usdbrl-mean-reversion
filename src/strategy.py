@@ -79,6 +79,40 @@ def generate_exit_signal(df: pd.DataFrame, zscore_exit_band: float = 0.5) -> pd.
     return exit_signal
 
 
+def generate_signals(
+    df: pd.DataFrame,
+    zscore_entry: float = 2.0,
+    rsi_lower: float = 30,
+    rsi_upper: float = 70,
+    zscore_exit_band: float = 0.5,
+) -> pd.DataFrame:
+    """
+    Add entry_signal and exit_signal columns to a price DataFrame that
+    already contains the indicators (see indicators.add_indicators).
+
+    This is the single entry point the rest of the pipeline
+    (backtester.py) should use — same design pattern as
+    indicators.add_indicators: works on a copy, doesn't mutate the input.
+
+    Args:
+        df: DataFrame containing RSI and Z_score columns.
+        zscore_entry: Absolute Z-score threshold to trigger an entry.
+        rsi_lower: RSI threshold below which the long condition confirms.
+        rsi_upper: RSI threshold above which the short condition confirms.
+        zscore_exit_band: Absolute Z-score threshold for exit.
+
+    Returns:
+        A new DataFrame (input not mutated) with entry_signal (-1/0/1)
+        and exit_signal (bool) columns added.
+    """
+    result = df.copy()
+    result["entry_signal"] = generate_entry_signal(
+        result, zscore_entry=zscore_entry, rsi_lower=rsi_lower, rsi_upper=rsi_upper
+    )
+    result["exit_signal"] = generate_exit_signal(result, zscore_exit_band=zscore_exit_band)
+    return result
+
+
 if __name__ == "__main__":
     import sys
     from pathlib import Path
@@ -89,8 +123,7 @@ if __name__ == "__main__":
 
     prices = load_price_data("USDBRL=X", "2015-01-01", "2024-12-31")
     prices = add_indicators(prices)
-    prices["entry_signal"] = generate_entry_signal(prices)
-    prices["exit_signal"] = generate_exit_signal(prices)
+    prices = generate_signals(prices)
 
     print(prices["entry_signal"].value_counts())
     print(f"\nExit signal True on {prices['exit_signal'].sum()} of {len(prices)} days")
