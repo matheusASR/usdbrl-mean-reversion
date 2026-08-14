@@ -53,6 +53,32 @@ def generate_entry_signal(
     return pd.Series(signal, index=df.index, name="entry_signal")
 
 
+def generate_exit_signal(df: pd.DataFrame, zscore_exit_band: float = 0.5) -> pd.Series:
+    """
+    Generate mean-reversion exit signals: True when the Z-score has
+    returned close enough to zero that the reversion thesis is considered
+    fulfilled.
+
+    This condition is direction-agnostic — it applies the same way to
+    both long and short positions, since "the price reverted to its
+    mean" is true regardless of which side the position is on. Rows
+    with a NaN Z_score (e.g. warm-up period) naturally evaluate to False,
+    since NaN comparisons are always False in pandas.
+
+    Args:
+        df: DataFrame containing a Z_score column.
+        zscore_exit_band: Absolute Z-score threshold below which the
+            reversion is considered complete (default 0.5, i.e. the
+            band [-0.5, +0.5]).
+
+    Returns:
+        A boolean Series aligned to df's index.
+    """
+    exit_signal = df["Z_score"].abs() <= zscore_exit_band
+    exit_signal.name = "exit_signal"
+    return exit_signal
+
+
 if __name__ == "__main__":
     import sys
     from pathlib import Path
@@ -64,7 +90,9 @@ if __name__ == "__main__":
     prices = load_price_data("USDBRL=X", "2015-01-01", "2024-12-31")
     prices = add_indicators(prices)
     prices["entry_signal"] = generate_entry_signal(prices)
+    prices["exit_signal"] = generate_exit_signal(prices)
 
     print(prices["entry_signal"].value_counts())
+    print(f"\nExit signal True on {prices['exit_signal'].sum()} of {len(prices)} days")
     print("\nSample long entries:")
     print(prices[prices["entry_signal"] == 1][["Close", "RSI", "Z_score"]].head())
