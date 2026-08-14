@@ -94,6 +94,55 @@ def calculate_position_size(
     return position_size
 
 
+def apply_risk_management(
+    df: pd.DataFrame,
+    capital: float,
+    risk_per_trade: float = 0.01,
+    atr_multiplier: float = 2.0,
+    price_col: str = "Close",
+) -> pd.DataFrame:
+    """
+    Add stop_price and position_size columns for every row with an entry
+    signal (see strategy.generate_signals).
+
+    Only rows where entry_signal != 0 get risk parameters computed — rows
+    without a signal are left as NaN. This is deliberate: computing a
+    "stop distance" for direction=0 would degenerate to stop_price ==
+    entry_price (distance zero), which is meaningless and would trigger
+    the zero-distance warning from calculate_position_size on nearly
+    every row.
+
+    Args:
+        df: DataFrame containing entry_signal, ATR, and price_col columns
+            (see strategy.generate_signals + indicators.add_indicators).
+        capital: Total capital available.
+        risk_per_trade: Fraction of capital to risk per trade (e.g. 0.01).
+        atr_multiplier: How many ATRs away the stop sits (default 2.0).
+        price_col: Column used as the entry price (default "Close").
+
+    Returns:
+        A new DataFrame (input not mutated) with stop_price and
+        position_size columns added.
+    """
+    result = df.copy()
+    result["stop_price"] = np.nan
+    result["position_size"] = np.nan
+
+    has_signal = result["entry_signal"] != 0
+    if has_signal.any():
+        entries = result.loc[has_signal]
+        stop_price = calculate_stop_price(
+            entries[price_col], entries["ATR"], entries["entry_signal"], atr_multiplier
+        )
+        position_size = calculate_position_size(
+            capital, risk_per_trade, entries[price_col], stop_price
+        )
+        result.loc[has_signal, "stop_price"] = stop_price
+        result.loc[has_signal, "position_size"] = position_size
+
+    return result
+
+
 if __name__ == "__main__":
     # Scalar example: a single long trade
     stop = calculate_stop_price(entry_price=5.00, atr=0.05, direction=1)
@@ -114,3 +163,14 @@ if __name__ == "__main__":
     )
     print()
     print(df)
+
+    # Orchestration example: a DataFrame mixing signal and no-signal rows,
+    # like what strategy.generate_signals would produce.
+    signals_df = pd.DataFrame({
+        "Close": [5.00, 5.02, 4.80, 5.01],
+        "ATR": [0.05, 0.05, 0.06, 0.05],
+        "entry_signal": [1, 0, -1, 0],
+    })
+    result = apply_risk_management(signals_df, capital=100_000, risk_per_trade=0.01)
+    print()
+    print(result)
