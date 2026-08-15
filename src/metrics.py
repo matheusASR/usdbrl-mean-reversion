@@ -334,6 +334,36 @@ def calculate_buy_and_hold_equity(
     return equity
 
 
+def calculate_metrics_by_direction(trades: pd.DataFrame) -> pd.DataFrame:
+    """
+    Break down trade performance by direction (long vs. short) — useful
+    for diagnosing whether one side of the strategy is dragging down the
+    other (e.g. a persistent one-directional trend working against
+    mean-reversion trades on that side).
+
+    Args:
+        trades: Trade log DataFrame (see backtester.trades_to_dataframe),
+            must contain direction and net_pnl columns.
+
+    Returns:
+        A DataFrame with one row per direction ("long", "short"),
+        containing total_trades, win_rate, profit_factor, total_net_pnl,
+        and avg_net_pnl.
+    """
+    records = []
+    for direction, label in [(1, "long"), (-1, "short")]:
+        subset = trades[trades["direction"] == direction]
+        records.append({
+            "direction": label,
+            "total_trades": len(subset),
+            "win_rate": calculate_win_rate(subset),
+            "profit_factor": calculate_profit_factor(subset),
+            "total_net_pnl": subset["net_pnl"].sum() if len(subset) > 0 else 0.0,
+            "avg_net_pnl": subset["net_pnl"].mean() if len(subset) > 0 else np.nan,
+        })
+    return pd.DataFrame(records)
+
+
 if __name__ == "__main__":
     # Synthetic equity curve: ~2 years, modest upward drift with noise
     rng = np.random.default_rng(seed=99)

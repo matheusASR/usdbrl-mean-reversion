@@ -12,11 +12,13 @@ import pytest
 
 from src.metrics import (
     calculate_annualized_volatility,
+    calculate_buy_and_hold_equity,
     calculate_cagr,
     calculate_daily_returns,
     calculate_downside_deviation,
     calculate_drawdown_series,
     calculate_max_drawdown,
+    calculate_metrics_by_direction,
     calculate_profit_factor,
     calculate_sharpe_ratio,
     calculate_sortino_ratio,
@@ -215,3 +217,34 @@ class TestGenerateReport:
 
         report = generate_report(equity, trades)
         assert report["Total Trades"] == 3
+
+
+# ---------------------------------------------------------------------------
+# calculate_metrics_by_direction
+# ---------------------------------------------------------------------------
+
+class TestMetricsByDirection:
+    def test_known_values(self):
+        trades = pd.DataFrame({
+            "direction": [1, 1, -1, -1, -1, 1],
+            "net_pnl": [100, -50, -200, -80, 30, 60],
+        })
+        result = calculate_metrics_by_direction(trades)
+
+        long_row = result[result["direction"] == "long"].iloc[0]
+        short_row = result[result["direction"] == "short"].iloc[0]
+
+        assert long_row["total_trades"] == 3
+        assert long_row["win_rate"] == pytest.approx(2 / 3)
+        assert long_row["total_net_pnl"] == pytest.approx(110)
+
+        assert short_row["total_trades"] == 3
+        assert short_row["win_rate"] == pytest.approx(1 / 3)
+        assert short_row["total_net_pnl"] == pytest.approx(-250)
+
+    def test_handles_direction_with_zero_trades(self):
+        trades = pd.DataFrame({"direction": [1, 1], "net_pnl": [100, 50]})
+        result = calculate_metrics_by_direction(trades)
+        short_row = result[result["direction"] == "short"].iloc[0]
+        assert short_row["total_trades"] == 0
+        assert np.isnan(short_row["win_rate"])
