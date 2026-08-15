@@ -80,6 +80,106 @@ def calculate_annualized_volatility(
     return daily_returns.std() * np.sqrt(periods_per_year)
 
 
+def calculate_sharpe_ratio(
+    daily_returns: pd.Series,
+    risk_free_rate: float = 0.0,
+    periods_per_year: int = TRADING_DAYS_PER_YEAR,
+) -> float:
+    """
+    Calculate the annualized Sharpe Ratio: return per unit of total risk
+    (volatility, both upside and downside).
+
+    Uses a risk-free rate of 0% by default — a common simplification in
+    FX backtests, since "the risk-free rate" is ambiguous when the asset
+    itself is an exchange rate between two currencies. Override
+    risk_free_rate if you want to net out a specific reference rate
+    (e.g. CDI).
+
+    Args:
+        daily_returns: Daily returns (see calculate_daily_returns).
+        risk_free_rate: Annual risk-free rate as a decimal (default 0.0).
+        periods_per_year: Trading periods per year (default 252).
+
+    Returns:
+        Annualized Sharpe Ratio. Returns 0.0 if returns have zero
+        volatility (a degenerate case — no risk-adjusted signal to
+        compute).
+    """
+    daily_rf = risk_free_rate / periods_per_year
+    excess_returns = daily_returns - daily_rf
+
+    std = excess_returns.std()
+    if std == 0:
+        return 0.0
+
+    return (excess_returns.mean() / std) * np.sqrt(periods_per_year)
+
+
+def calculate_downside_deviation(
+    daily_returns: pd.Series,
+    target_return: float = 0.0,
+    periods_per_year: int = TRADING_DAYS_PER_YEAR,
+) -> float:
+    """
+    Calculate the annualized downside deviation: the risk measure Sortino
+    uses instead of total volatility.
+
+    Important implementation detail: this is computed over ALL returns,
+    not just the negative ones. Returns above the target contribute a
+    deviation of exactly 0 (rather than being dropped from the set)
+    before averaging. Filtering to only the negative days and taking
+    their standard deviation — a common shortcut — divides by a smaller
+    N and inflates the result; that is NOT the standard definition.
+
+    Args:
+        daily_returns: Daily returns.
+        target_return: The threshold below which a return counts as
+            "downside" (default 0.0).
+        periods_per_year: Trading periods per year (default 252).
+
+    Returns:
+        Annualized downside deviation (always >= 0).
+    """
+    downside_diff = np.minimum(daily_returns - target_return, 0)
+    downside_variance = (downside_diff ** 2).mean()
+    daily_downside_dev = np.sqrt(downside_variance)
+    return daily_downside_dev * np.sqrt(periods_per_year)
+
+
+def calculate_sortino_ratio(
+    daily_returns: pd.Series,
+    risk_free_rate: float = 0.0,
+    target_return: float = 0.0,
+    periods_per_year: int = TRADING_DAYS_PER_YEAR,
+) -> float:
+    """
+    Calculate the annualized Sortino Ratio: return per unit of downside
+    risk only (see calculate_downside_deviation).
+
+    Args:
+        daily_returns: Daily returns.
+        risk_free_rate: Annual risk-free rate as a decimal (default 0.0).
+        target_return: Threshold below which a return counts as downside
+            (default 0.0).
+        periods_per_year: Trading periods per year (default 252).
+
+    Returns:
+        Annualized Sortino Ratio. Returns np.inf if there were no
+        downside days at all in the sample (a real, if rare, possibility
+        over a short backtest — not a computation error, so it is NOT
+        silently mapped to 0.0. Callers displaying this value should
+        handle infinity explicitly, e.g. showing "∞").
+    """
+    daily_rf = risk_free_rate / periods_per_year
+    excess_return_annualized = (daily_returns.mean() - daily_rf) * periods_per_year
+
+    downside_dev = calculate_downside_deviation(daily_returns, target_return, periods_per_year)
+    if downside_dev == 0:
+        return np.inf
+
+    return excess_return_annualized / downside_dev
+
+
 if __name__ == "__main__":
     # Synthetic equity curve: ~2 years, modest upward drift with noise
     rng = np.random.default_rng(seed=99)
@@ -91,7 +191,11 @@ if __name__ == "__main__":
     returns = calculate_daily_returns(equity)
     cagr = calculate_cagr(equity)
     vol = calculate_annualized_volatility(returns)
+    sharpe = calculate_sharpe_ratio(returns)
+    sortino = calculate_sortino_ratio(returns)
 
     print(f"Final equity: {equity.iloc[-1]:.2f}")
     print(f"CAGR: {cagr:.2%}")
     print(f"Annualized volatility: {vol:.2%}")
+    print(f"Sharpe Ratio: {sharpe:.2f}")
+    print(f"Sortino Ratio: {sortino:.2f}")
