@@ -41,10 +41,12 @@ This project was built to demonstrate practical skills at the intersection of so
 
 ### Entry Rules
 
+Initial thresholds (Z-score ±2, RSI 30/70) were the starting specification. After in-sample calibration (see [Methodology](#methodology)), the frozen, final thresholds are:
+
 | Direction | Condition |
 |---|---|
-| Long (buy USD) | Z-score < -2 **and** RSI < 30 |
-| Short (sell USD) | Z-score > +2 **and** RSI > 70 |
+| Long (buy USD) | Z-score < -2.5 **and** RSI < 35 |
+| Short (sell USD) | Z-score > +2.5 **and** RSI > 65 |
 
 ### Exit Rules
 
@@ -70,6 +72,10 @@ To avoid overfitting — one of the most common pitfalls in retail quant project
 
 Performance is benchmarked against a simple **buy-and-hold** position over the same periods.
 
+### Parameter Calibration
+
+Thresholds were calibrated exclusively on the in-sample period using a small, hypothesis-driven parameter search (not an exhaustive grid) — each range tested had a specific rationale (e.g. wider stops to reduce premature stop-outs, more selective entries, symmetric RSI bands) rather than being chosen by brute force. This keeps the search modest enough to limit the "multiple comparisons" risk of a parameter combination looking good purely by chance. See `calibration.py` for the full search process. Once frozen, parameters were **not** adjusted based on out-of-sample results.
+
 ### Evaluation Metrics
 
 - CAGR (annualized return)
@@ -89,17 +95,17 @@ usdbrl-mean-reversion/
 │   ├── data_loader.py     # yfinance data fetching and cleaning
 │   ├── indicators.py      # RSI, Z-score, ATR calculations
 │   ├── strategy.py        # Signal generation (entry/exit logic)
-│   ├── backtester.py      # Trade simulation engine
 │   ├── risk.py            # Position sizing and stop-loss logic
-│   └── metrics.py         # Performance metrics and reporting
+│   ├── backtester.py      # Trade simulation engine
+│   ├── metrics.py         # Performance metrics and reporting
+│   ├── pipeline.py        # End-to-end orchestration (run this)
+│   └── calibration.py     # In-sample parameter search
 ├── notebooks/
 │   └── analysis.ipynb     # Exploratory analysis and results visualization
-├── tests/                 # Unit tests
+├── tests/                 # Unit tests (108+ tests across all modules)
 ├── requirements.txt
 └── README.md
 ```
-
-*(structure will evolve as the project is built)*
 
 ## Tech Stack
 
@@ -111,18 +117,58 @@ usdbrl-mean-reversion/
 
 ## Results
 
-🚧 *In progress — results and performance charts will be added as the backtest engine is completed.*
+### In-Sample (2010–2021, calibration period)
+
+| Metric | Strategy | Buy-and-Hold |
+|---|---|---|
+| CAGR | 0.20% | 9.46% |
+| Sharpe Ratio | 0.14 | 0.60 |
+| Sortino Ratio | 0.20 | 0.88 |
+| Max Drawdown | -6.39% | -26.80% |
+| Win Rate | 64.4% | — |
+| Profit Factor | 1.18 | — |
+| Total Trades | 45 | — |
+
+The strategy underperformed buy-and-hold on raw return in-sample — 2010–2021 was a sustained, multi-year USD appreciation trend (multiple crises reinforcing the direction), a regime that structurally disadvantages a symmetric mean-reversion approach. What the strategy did deliver was a much shallower drawdown (-6.39% vs. -26.80%) and a positive Profit Factor, at the cost of most of the upside.
+
+### Out-of-Sample (2022–2026, single blind validation run)
+
+| Metric | Strategy | Buy-and-Hold |
+|---|---|---|
+| CAGR | **1.16%** | -1.14% |
+| Sharpe Ratio | **0.79** | -0.01 |
+| Sortino Ratio | **1.29** | -0.02 |
+| Max Drawdown | **-1.81%** | -22.12% |
+| Win Rate | 78.6% | — |
+| Profit Factor | 3.54 | — |
+| Total Trades | 14 | — |
+
+The strategy beat the benchmark on every metric in the out-of-sample period, with a notably shallow drawdown. This is consistent with a plausible regime change: 2022–2026 was more range-bound/volatile (high interest rates, elections, a change in government) than a sustained directional trend — exactly the kind of environment mean reversion is expected to do well in.
+
+### Honest caveats
+
+- **Small sample.** 14 out-of-sample trades is not enough to claim statistical confidence in the edge — treat the Sharpe of 0.79 as a plausible, not proven, signal.
+- **Out-of-sample outperforming in-sample is unusual.** Normally you'd expect some degradation, since parameters were tuned on the in-sample data. The reversal here is consistent with a regime shift, but also warrants healthy skepticism rather than overclaiming.
+- **This is not a "get rich" strategy.** Absolute returns are modest (CAGR ~1%). The result that stands out is capital preservation (much shallower drawdowns than buy-and-hold), not high absolute returns.
+- Full parameter search process — including the round that ruled out several hypotheses — is in `calibration.py`.
 
 ## How to Run
 
 ```bash
 git clone https://github.com/<your-username>/usdbrl-mean-reversion.git
 cd usdbrl-mean-reversion
+python -m venv venv
+source venv/bin/activate  # Windows: venv\Scripts\activate
 pip install -r requirements.txt
-python src/backtester.py
+python -m src.pipeline
 ```
 
-*(instructions will be finalized once the codebase is complete)*
+This runs the full pipeline (data → indicators → signals → risk → backtest → metrics) for both the in-sample and out-of-sample periods, with the frozen calibrated parameters, printing strategy vs. buy-and-hold reports for each.
+
+To reproduce the in-sample parameter search:
+```bash
+python -m src.calibration
+```
 
 ## Limitations
 
@@ -133,13 +179,15 @@ python src/backtester.py
 
 ## Roadmap
 
-- [ ] Core backtest engine (RSI + Z-score + ATR sizing)
-- [ ] In-sample parameter tuning
-- [ ] Out-of-sample validation
+- [x] Core backtest engine (RSI + Z-score + ATR sizing)
+- [x] In-sample parameter tuning
+- [x] Out-of-sample validation
 - [ ] Extend to a basket of assets for robustness testing
 - [ ] Compare RSI-only vs. Bollinger-only vs. combined signal approaches
 - [ ] Interactive dashboard (Streamlit) for exploring results
 
 ## Author
 
-**Matheus** — Software Engineering student (FIAP) with a background in ETL, financial certifications (CPA, fixed income, derivatives), and hands-on experience in data/finance tooling.
+**Matheus** — Software Engineering student (FIAP) with a background in ETL, financial certifications (CPA-10, fixed income, derivatives), and hands-on experience in data/finance tooling.
+
+[LinkedIn](#) · [GitHub](#)
