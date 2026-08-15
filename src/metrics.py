@@ -12,6 +12,12 @@ import pandas as pd
 
 TRADING_DAYS_PER_YEAR = 252
 
+# Floating-point comparisons to zero should use a tolerance, not exact
+# equality — even mathematically identical inputs can leave a tiny
+# non-zero residue after operations like std() (sums/subtractions in
+# floating point rarely cancel to a perfect, bit-exact 0.0).
+_ZERO_TOLERANCE = 1e-10
+
 
 def calculate_daily_returns(equity_curve: pd.Series) -> pd.Series:
     """
@@ -109,7 +115,7 @@ def calculate_sharpe_ratio(
     excess_returns = daily_returns - daily_rf
 
     std = excess_returns.std()
-    if std == 0:
+    if std < _ZERO_TOLERANCE:
         return 0.0
 
     return (excess_returns.mean() / std) * np.sqrt(periods_per_year)
@@ -174,7 +180,7 @@ def calculate_sortino_ratio(
     excess_return_annualized = (daily_returns.mean() - daily_rf) * periods_per_year
 
     downside_dev = calculate_downside_deviation(daily_returns, target_return, periods_per_year)
-    if downside_dev == 0:
+    if downside_dev < _ZERO_TOLERANCE:
         return np.inf
 
     return excess_return_annualized / downside_dev
