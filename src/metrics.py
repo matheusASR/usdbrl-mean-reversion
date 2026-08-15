@@ -180,6 +180,39 @@ def calculate_sortino_ratio(
     return excess_return_annualized / downside_dev
 
 
+def calculate_drawdown_series(equity_curve: pd.Series) -> pd.Series:
+    """
+    Calculate the drawdown at every point in the equity curve: how far
+    below its highest-ever value (up to that day) the equity currently
+    sits.
+
+    Args:
+        equity_curve: Daily equity series.
+
+    Returns:
+        A Series of drawdown values, always <= 0 (e.g. -0.15 = 15% below
+        the running peak; 0 = at a new all-time high).
+    """
+    running_max = equity_curve.cummax()
+    drawdown = (equity_curve - running_max) / running_max
+    drawdown.name = "drawdown"
+    return drawdown
+
+
+def calculate_max_drawdown(equity_curve: pd.Series) -> float:
+    """
+    Calculate the Maximum Drawdown: the single worst peak-to-trough
+    decline observed over the whole equity curve.
+
+    Args:
+        equity_curve: Daily equity series.
+
+    Returns:
+        Max drawdown as a decimal, always <= 0 (e.g. -0.22 = -22%).
+    """
+    return calculate_drawdown_series(equity_curve).min()
+
+
 if __name__ == "__main__":
     # Synthetic equity curve: ~2 years, modest upward drift with noise
     rng = np.random.default_rng(seed=99)
@@ -193,9 +226,11 @@ if __name__ == "__main__":
     vol = calculate_annualized_volatility(returns)
     sharpe = calculate_sharpe_ratio(returns)
     sortino = calculate_sortino_ratio(returns)
+    max_dd = calculate_max_drawdown(equity)
 
     print(f"Final equity: {equity.iloc[-1]:.2f}")
     print(f"CAGR: {cagr:.2%}")
     print(f"Annualized volatility: {vol:.2%}")
     print(f"Sharpe Ratio: {sharpe:.2f}")
     print(f"Sortino Ratio: {sortino:.2f}")
+    print(f"Max Drawdown: {max_dd:.2%}")
