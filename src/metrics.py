@@ -213,6 +213,88 @@ def calculate_max_drawdown(equity_curve: pd.Series) -> float:
     return calculate_drawdown_series(equity_curve).min()
 
 
+def calculate_win_rate(trades: pd.DataFrame) -> float:
+    """
+    Calculate the fraction of trades that closed with a positive net P&L.
+
+    Args:
+        trades: Trade log DataFrame (see backtester.trades_to_dataframe),
+            must contain a net_pnl column.
+
+    Returns:
+        Win rate as a decimal (e.g. 0.55 = 55%). Returns np.nan if there
+        were no trades at all — a win rate is undefined without any
+        trades, not "0%".
+    """
+    if len(trades) == 0:
+        return np.nan
+    return (trades["net_pnl"] > 0).mean()
+
+
+def calculate_profit_factor(trades: pd.DataFrame) -> float:
+    """
+    Calculate the Profit Factor: total profit from winning trades divided
+    by the absolute total loss from losing trades.
+
+    A value above 1.0 means the strategy is net profitable; above 2.0 is
+    generally considered strong.
+
+    Args:
+        trades: Trade log DataFrame, must contain a net_pnl column.
+
+    Returns:
+        Profit Factor. Returns np.nan if there are no trades at all.
+        Returns np.inf if there were winning trades but zero losing
+        trades — a real (if rare) outcome, not a computation error, so
+        it is not silently mapped to 0.
+    """
+    if len(trades) == 0:
+        return np.nan
+
+    gross_profit = trades.loc[trades["net_pnl"] > 0, "net_pnl"].sum()
+    gross_loss = trades.loc[trades["net_pnl"] < 0, "net_pnl"].sum()  # <= 0
+
+    if gross_loss == 0:
+        return np.inf if gross_profit > 0 else np.nan
+
+    return gross_profit / abs(gross_loss)
+
+
+def generate_report(
+    equity_curve: pd.Series,
+    trades: pd.DataFrame,
+    risk_free_rate: float = 0.0,
+    periods_per_year: int = TRADING_DAYS_PER_YEAR,
+) -> dict:
+    """
+    Single entry point tying together every metric in this module — the
+    same set defined in the project's README.
+
+    Args:
+        equity_curve: Daily equity series (see
+            backtester.build_equity_curve).
+        trades: Trade log DataFrame (see backtester.trades_to_dataframe).
+        risk_free_rate: Annual risk-free rate as a decimal (default 0.0).
+        periods_per_year: Trading periods per year (default 252).
+
+    Returns:
+        A dict with CAGR, Annualized Volatility, Sharpe Ratio, Sortino
+        Ratio, Max Drawdown, Win Rate, Profit Factor, and Total Trades.
+    """
+    daily_returns = calculate_daily_returns(equity_curve)
+
+    return {
+        "CAGR": calculate_cagr(equity_curve, periods_per_year),
+        "Annualized Volatility": calculate_annualized_volatility(daily_returns, periods_per_year),
+        "Sharpe Ratio": calculate_sharpe_ratio(daily_returns, risk_free_rate, periods_per_year),
+        "Sortino Ratio": calculate_sortino_ratio(daily_returns, risk_free_rate, 0.0, periods_per_year),
+        "Max Drawdown": calculate_max_drawdown(equity_curve),
+        "Win Rate": calculate_win_rate(trades),
+        "Profit Factor": calculate_profit_factor(trades),
+        "Total Trades": len(trades),
+    }
+
+
 if __name__ == "__main__":
     # Synthetic equity curve: ~2 years, modest upward drift with noise
     rng = np.random.default_rng(seed=99)
@@ -234,3 +316,17 @@ if __name__ == "__main__":
     print(f"Sharpe Ratio: {sharpe:.2f}")
     print(f"Sortino Ratio: {sortino:.2f}")
     print(f"Max Drawdown: {max_dd:.2%}")
+
+    # Synthetic trade log, just for this demo (a real one comes from
+    # backtester.run_backtest).
+    trades = pd.DataFrame({
+        "net_pnl": [500, -200, 800, -150, 300, -100, 950, 200, -400, 600],
+    })
+
+    print("\n--- Full report (generate_report) ---")
+    report = generate_report(equity, trades)
+    for key, value in report.items():
+        if isinstance(value, float) and abs(value) < 10:
+            print(f"{key}: {value:.2%}" if "Rate" in key or key in ("CAGR", "Annualized Volatility", "Max Drawdown") else f"{key}: {value:.2f}")
+        else:
+            print(f"{key}: {value}")
