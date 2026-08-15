@@ -148,24 +148,56 @@ def print_report(report: dict, title: str = "Performance Report") -> None:
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
-    IN_SAMPLE_START = "2010-01-01"
-    IN_SAMPLE_END = "2021-12-31"
+    # --- FROZEN PARAMETERS ---
+    # Calibrated exclusively on the in-sample period (see calibration.py
+    # and the conversation history for the full search process). From
+    # this point on, these values are NOT adjusted based on out-of-sample
+    # results — doing so would defeat the entire purpose of holding out
+    # a validation period.
+    FROZEN_PARAMS = dict(
+        zscore_entry=2.5,
+        rsi_lower=35,
+        rsi_upper=65,
+        atr_multiplier=2.0,
+        zscore_exit_band=0.5,
+    )
+
+    IN_SAMPLE_START, IN_SAMPLE_END = "2010-01-01", "2021-12-31"
+    OUT_SAMPLE_START, OUT_SAMPLE_END = "2022-01-01", "2026-08-10"
 
     try:
-        results = run_pipeline(
-            ticker="USDBRL=X",
-            start=IN_SAMPLE_START,
-            end=IN_SAMPLE_END,
+        in_sample = run_pipeline(
+            ticker="USDBRL=X", start=IN_SAMPLE_START, end=IN_SAMPLE_END, **FROZEN_PARAMS
+        )
+        out_sample = run_pipeline(
+            ticker="USDBRL=X", start=OUT_SAMPLE_START, end=OUT_SAMPLE_END, **FROZEN_PARAMS
         )
     except DataLoadError as exc:
         print(f"Could not run the pipeline: {exc}")
         raise SystemExit(1)
 
-    print_report(results["report"], title=f"Strategy - In-Sample ({IN_SAMPLE_START} to {IN_SAMPLE_END})")
+    print_report(
+        in_sample["report"],
+        title=f"Strategy (frozen params) - In-Sample ({IN_SAMPLE_START} to {IN_SAMPLE_END})",
+    )
+    in_sample_bh = run_benchmark(in_sample["prices"], initial_capital=100_000)
+    print_report(
+        in_sample_bh["report"], title=f"Buy-and-Hold - In-Sample ({IN_SAMPLE_START} to {IN_SAMPLE_END})"
+    )
 
-    benchmark = run_benchmark(results["prices"], initial_capital=100_000)
-    print_report(benchmark["report"], title=f"Buy-and-Hold - In-Sample ({IN_SAMPLE_START} to {IN_SAMPLE_END})")
+    print("\n" + "#" * 50)
+    print("# OUT-OF-SAMPLE — SINGLE BLIND VALIDATION RUN")
+    print("# Parameters were frozen before seeing this result.")
+    print("#" * 50)
 
-    n_trades = len(results["backtest_result"].trades)
-    print(f"\nTotal signals generated: {(results['prices']['entry_signal'] != 0).sum()}")
-    print(f"Total trades executed: {n_trades}")
+    print_report(
+        out_sample["report"],
+        title=f"Strategy (frozen params) - Out-of-Sample ({OUT_SAMPLE_START} to {OUT_SAMPLE_END})",
+    )
+    out_sample_bh = run_benchmark(out_sample["prices"], initial_capital=100_000)
+    print_report(
+        out_sample_bh["report"], title=f"Buy-and-Hold - Out-of-Sample ({OUT_SAMPLE_START} to {OUT_SAMPLE_END})"
+    )
+
+    print(f"\nIn-sample trades: {len(in_sample['backtest_result'].trades)}")
+    print(f"Out-of-sample trades: {len(out_sample['backtest_result'].trades)}")
