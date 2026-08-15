@@ -12,10 +12,12 @@ actual, runnable result on real USDBRL data.
 
 import logging
 
+import pandas as pd
+
 from src.backtester import run_backtest
 from src.data_loader import DataLoadError, load_price_data
 from src.indicators import add_indicators
-from src.metrics import generate_report
+from src.metrics import calculate_buy_and_hold_equity, generate_report
 from src.risk import apply_risk_management
 from src.strategy import generate_signals
 
@@ -94,6 +96,36 @@ def run_pipeline(
     return {"prices": prices, "backtest_result": result, "report": report}
 
 
+def run_benchmark(prices: pd.DataFrame, initial_capital: float, cost_pct: float = 0.0005) -> dict:
+    """
+    Compute the buy-and-hold benchmark over the same date range and
+    price series the strategy had available (i.e. after indicator
+    warm-up rows are dropped), for a fair side-by-side comparison.
+
+    Args:
+        prices: The prices DataFrame (must contain Close), typically the
+            same one returned by run_pipeline under "prices".
+        initial_capital: Starting capital, matching the strategy run.
+        cost_pct: One-time entry transaction cost.
+
+    Returns:
+        A dict with "equity_curve" and "report" (same shape as
+        run_pipeline's "report"), so the two can be compared directly
+        with print_report.
+    """
+    benchmark_equity = calculate_buy_and_hold_equity(
+        prices["Close"], initial_capital, cost_pct=cost_pct
+    )
+
+    # A buy-and-hold position has no closed trades, so Win Rate / Profit
+    # Factor should come back as NaN ("not applicable") rather than a
+    # fabricated single trade standing in for the whole position.
+    empty_trades = pd.DataFrame(columns=["net_pnl"])
+    report = generate_report(benchmark_equity, empty_trades)
+
+    return {"equity_curve": benchmark_equity, "report": report}
+
+
 def print_report(report: dict, title: str = "Performance Report") -> None:
     """Pretty-print a metrics report dict to the console."""
     print(f"\n{'=' * 50}")
@@ -102,8 +134,11 @@ def print_report(report: dict, title: str = "Performance Report") -> None:
 
     percent_keys = {"CAGR", "Annualized Volatility", "Max Drawdown", "Win Rate"}
     for key, value in report.items():
-        if key in percent_keys:
-            print(f"{key:.<30} {value:.2%}" if value == value else f"{key:.<30} N/A")  # NaN check
+        is_nan = isinstance(value, float) and value != value  # NaN check (NaN != NaN)
+        if is_nan:
+            print(f"{key:.<30} N/A")
+        elif key in percent_keys:
+            print(f"{key:.<30} {value:.2%}")
         elif isinstance(value, float):
             print(f"{key:.<30} {value:.2f}" if value != float("inf") else f"{key:.<30} inf")
         else:
@@ -126,7 +161,10 @@ if __name__ == "__main__":
         print(f"Could not run the pipeline: {exc}")
         raise SystemExit(1)
 
-    print_report(results["report"], title=f"In-Sample ({IN_SAMPLE_START} to {IN_SAMPLE_END})")
+    print_report(results["report"], title=f"Strategy - In-Sample ({IN_SAMPLE_START} to {IN_SAMPLE_END})")
+
+    benchmark = run_benchmark(results["prices"], initial_capital=100_000)
+    print_report(benchmark["report"], title=f"Buy-and-Hold - In-Sample ({IN_SAMPLE_START} to {IN_SAMPLE_END})")
 
     n_trades = len(results["backtest_result"].trades)
     print(f"\nTotal signals generated: {(results['prices']['entry_signal'] != 0).sum()}")

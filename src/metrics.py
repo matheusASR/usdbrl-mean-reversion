@@ -301,6 +301,39 @@ def generate_report(
     }
 
 
+def calculate_buy_and_hold_equity(
+    prices: pd.Series,
+    initial_capital: float,
+    cost_pct: float = 0.0005,
+) -> pd.Series:
+    """
+    Simulate a naive buy-and-hold position: buy at the first available
+    price (paying the same entry transaction cost the strategy pays,
+    for a fair comparison) and hold until the end, marking to market
+    every day.
+
+    This is the benchmark the project's README promises: does the
+    strategy actually beat simply buying and holding the asset?
+
+    Args:
+        prices: A price series (e.g. Close), indexed by date.
+        initial_capital: Starting capital.
+        cost_pct: One-time entry transaction cost (default 0.05%,
+            matching the strategy's per-leg cost).
+
+    Returns:
+        A daily equity series, aligned to the same index as prices. No
+        exit cost is applied — consistent with how the strategy's own
+        equity curve marks an open position (unrealized, no exit cost
+        until actually closed).
+    """
+    entry_price = prices.iloc[0] * (1 + cost_pct)
+    units = initial_capital / entry_price
+    equity = units * prices
+    equity.name = "equity"
+    return equity
+
+
 if __name__ == "__main__":
     # Synthetic equity curve: ~2 years, modest upward drift with noise
     rng = np.random.default_rng(seed=99)
