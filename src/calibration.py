@@ -32,27 +32,38 @@ def run_parameter_grid(
     ticker: str,
     start: str,
     end: str,
-    param_grid: dict,
+    param_grid,
     initial_capital: float = 100_000,
     risk_per_trade: float = 0.01,
     cost_pct: float = 0.0005,
 ) -> pd.DataFrame:
     """
-    Run the pipeline once per combination in param_grid (the Cartesian
-    product of all provided value lists), on the same price data fetched
-    once and reused across combinations for speed.
+    Run the pipeline once per parameter combination, on the same price
+    data fetched once and reused across combinations for speed.
 
-    Any parameter not included in param_grid keeps its default from the
-    underlying functions (indicators.add_indicators,
+    Accepts two forms for param_grid:
+        - dict[str, list]: every combination in the Cartesian product of
+          the provided value lists is tested (the original behavior).
+        - list[dict]: each dict is used as-is, one explicit combination
+          per entry. Useful when you want hand-picked, economically
+          reasoned combinations (e.g. symmetric RSI bands) instead of
+          every possible cross-product — which keeps the total number
+          of combinations tested deliberately small. Testing fewer,
+          more targeted combinations reduces the "multiple comparisons"
+          risk: the more combinations you try, the higher the chance
+          one looks good purely by luck, with no real edge behind it.
+
+    Any parameter not included in a given combination keeps its default
+    from the underlying functions (indicators.add_indicators,
     strategy.generate_signals, risk.apply_risk_management).
 
     Args:
         ticker: Yahoo Finance ticker.
         start, end: Date range — MUST be the in-sample period only.
-        param_grid: Dict mapping parameter name -> list of values to try.
-            Recognized keys: rsi_period, zscore_period, atr_period,
-            zscore_entry, rsi_lower, rsi_upper, zscore_exit_band,
-            atr_multiplier.
+        param_grid: dict[str, list] (Cartesian product) or list[dict]
+            (explicit combinations). Recognized keys: rsi_period,
+            zscore_period, atr_period, zscore_entry, rsi_lower,
+            rsi_upper, zscore_exit_band, atr_multiplier.
         initial_capital: Starting capital, held constant across runs.
         risk_per_trade: Risk per trade, held constant across runs.
         cost_pct: Transaction cost per leg, held constant across runs.
@@ -64,14 +75,17 @@ def run_parameter_grid(
     """
     prices_raw = load_price_data(ticker, start, end)
 
-    keys = list(param_grid.keys())
-    combinations = list(product(*param_grid.values()))
-    logger.info("Running grid search: %d combinations", len(combinations))
+    if isinstance(param_grid, dict):
+        keys = list(param_grid.keys())
+        combos = [dict(zip(keys, values)) for values in product(*param_grid.values())]
+    else:
+        combos = list(param_grid)
+
+    logger.info("Running grid search: %d combinations", len(combos))
 
     records = []
-    for i, combo in enumerate(combinations, start=1):
-        params = dict(zip(keys, combo))
-        logger.info("[%d/%d] %s", i, len(combinations), params)
+    for i, params in enumerate(combos, start=1):
+        logger.info("[%d/%d] %s", i, len(combos), params)
 
         prices = add_indicators(
             prices_raw,
@@ -105,26 +119,43 @@ def run_parameter_grid(
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
-    # Hypothesis-driven grid: wider stops (less premature stop-outs),
-    # more selective entries, and a tighter exit band — see the
-    # conversation for the reasoning behind each range.
-    grid = {
+    # --- Round 1: hypothesis-driven grid (wider stops, more selective
+    # entries, tighter exit band). Winner: atr_multiplier=2.0,
+    # zscore_entry=2.5, zscore_exit_band=0.5.
+    round_1_grid = {
         "atr_multiplier": [1.5, 2.0, 3.0],
         "zscore_entry": [1.5, 2.0, 2.5],
         "zscore_exit_band": [0.25, 0.5],
     }
 
+    # --- Round 2: hand-picked combinations, not a full Cartesian grid,
+    # to keep the total number of combinations tested deliberately small
+    # (see run_parameter_grid's docstring on the multiple-comparisons
+    # risk). Fixes atr_multiplier=2.0 and zscore_exit_band=0.5 (round 1
+    # winners), varies zscore_entry further and tests symmetric RSI
+    # bands only (25/75, 30/70, 35/65) — asymmetric bands have no clear
+    # economic rationale, so they're deliberately excluded.
+    round_2_combos = [
+        {"atr_multiplier": 2.0, "zscore_exit_band": 0.5, "zscore_entry": 2.0, "rsi_lower": 30, "rsi_upper": 70},
+        {"atr_multiplier": 2.0, "zscore_exit_band": 0.5, "zscore_entry": 2.5, "rsi_lower": 30, "rsi_upper": 70},
+        {"atr_multiplier": 2.0, "zscore_exit_band": 0.5, "zscore_entry": 3.0, "rsi_lower": 30, "rsi_upper": 70},
+        {"atr_multiplier": 2.0, "zscore_exit_band": 0.5, "zscore_entry": 2.0, "rsi_lower": 25, "rsi_upper": 75},
+        {"atr_multiplier": 2.0, "zscore_exit_band": 0.5, "zscore_entry": 2.5, "rsi_lower": 25, "rsi_upper": 75},
+        {"atr_multiplier": 2.0, "zscore_exit_band": 0.5, "zscore_entry": 3.0, "rsi_lower": 25, "rsi_upper": 75},
+        {"atr_multiplier": 2.0, "zscore_exit_band": 0.5, "zscore_entry": 2.5, "rsi_lower": 35, "rsi_upper": 65},
+    ]
+
     results = run_parameter_grid(
         ticker="USDBRL=X",
         start="2010-01-01",
         end="2021-12-31",
-        param_grid=grid,
+        param_grid=round_2_combos,
     )
 
     pd.set_option("display.width", 160)
     pd.set_option("display.max_columns", 20)
-    print("\nTop 10 combinations by Sharpe Ratio:")
-    print(results.head(10)[
-        ["atr_multiplier", "zscore_entry", "zscore_exit_band",
+    print("\nRound 2 — all combinations, by Sharpe Ratio:")
+    print(results[
+        ["atr_multiplier", "zscore_entry", "rsi_lower", "rsi_upper", "zscore_exit_band",
          "CAGR", "Sharpe Ratio", "Max Drawdown", "Win Rate", "Profit Factor", "Total Trades"]
     ].to_string(index=False))
